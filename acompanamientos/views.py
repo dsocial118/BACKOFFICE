@@ -7,6 +7,7 @@ from admisiones.models.admisiones import (
     Admision,
     InformeTecnico,
     DocumentosExpediente,
+    Anexo,
 )
 from acompanamientos.acompanamiento_service import AcompanamientoService
 from acompanamientos.models.hitos import Hitos
@@ -32,7 +33,6 @@ def restaurar_hito(request, comedor_id):
     return redirect(request.META.get("HTTP_REFERER", "/"))
 
 
-# TODO: Sincronizar con la tarea de Pablo
 class AcompanamientoDetailView(DetailView):
     model = Comedor
     template_name = "acompañamiento_detail.html"
@@ -47,25 +47,36 @@ class AcompanamientoDetailView(DetailView):
             self.request.user.is_superuser
             or self.request.user.groups.filter(name="Tecnico Comedor").exists()
         )
+
+        # Obtener datos de admisión
+        admision_data = self._get_admision_data(comedor)
+        context.update(admision_data)
+
+        # Obtener datos de prestaciones
+        prestaciones_data = self._get_prestaciones_data(admision_data.get("anexo"))
+        context.update(prestaciones_data)
+
+        return context
+
+    def _get_admision_data(self, comedor):
         admision = (
             Admision.objects.filter(comedor=comedor)
-            .exclude(num_if__isnull=True)
-            .exclude(num_if="")
+            .exclude(legales_num_if__isnull=True)
+            .exclude(legales_num_if="")
             .order_by("-id")
             .first()
         )
-        context["admision"] = admision
 
         info_relevante = None
+        anexo = None
         resolucion = None
-        doc_resolucion = None
 
         if admision:
             info_relevante = (
-                InformeTecnico.objects.filter(admision__comedor=comedor)
-                .order_by("-id")
-                .first()
+                InformeTecnico.objects.filter(admision=admision).order_by("-id").first()
             )
+            anexo = Anexo.objects.filter(admision=admision).first()
+
             doc_resolucion = (
                 DocumentosExpediente.objects.filter(
                     admision__comedor=comedor, tipo="Resolución"
@@ -73,26 +84,60 @@ class AcompanamientoDetailView(DetailView):
                 .order_by("-creado")
                 .first()
             )
-        if doc_resolucion:
-            resolucion = doc_resolucion.value or doc_resolucion.nombre
+            if doc_resolucion:
+                resolucion = doc_resolucion.value or doc_resolucion.nombre
 
-        # Asignar valores al contexto
-        context["info_relevante"] = info_relevante
-        context["numero_if"] = admision.num_if if admision else None
-        context["numero_resolucion"] = resolucion
+        return {
+            "admision": admision,
+            "info_relevante": info_relevante,
+            "anexo": anexo,
+            "numero_if": admision.legales_num_if if admision else None,
+            "numero_resolucion": resolucion,
+            "vencimiento_mandato": "Pendiente de implementación",
+        }
 
-        # Prestaciones
-        if info_relevante:
-            context["prestaciones_dias"] = [
-                {"tipo": "Desayuno", "cantidad": info_relevante.prestaciones_desayuno},
-                {"tipo": "Almuerzo", "cantidad": info_relevante.prestaciones_almuerzo},
-                {"tipo": "Merienda", "cantidad": info_relevante.prestaciones_merienda},
-                {"tipo": "Cena", "cantidad": info_relevante.prestaciones_cena},
-            ]
-        else:
-            context["prestaciones_dias"] = []
+    def _get_prestaciones_data(self, anexo):
+        if not anexo:
+            return {
+                "prestaciones_por_dia": [],
+                "prestaciones_dias": [],
+                "dias_semana": [],
+            }
 
-        return context
+        dias = [
+            "lunes",
+            "martes",
+            "miercoles",
+            "jueves",
+            "viernes",
+            "sabado",
+            "domingo",
+        ]
+        tipos_comida = ["desayuno", "almuerzo", "merienda", "cena"]
+
+        prestaciones_por_dia = []
+        prestaciones_totales = []
+
+        for tipo in tipos_comida:
+            fila = {"tipo": tipo.capitalize()}
+            total_semanal = 0
+
+            for dia in dias:
+                campo_nombre = f"{tipo}_{dia}"
+                cantidad = getattr(anexo, campo_nombre, 0)
+                fila[dia] = cantidad
+                total_semanal += cantidad or 0
+
+            prestaciones_por_dia.append(fila)
+            prestaciones_totales.append(
+                {"tipo": tipo.capitalize(), "cantidad": total_semanal}
+            )
+
+        return {
+            "prestaciones_por_dia": prestaciones_por_dia,
+            "prestaciones_dias": prestaciones_totales,
+            "dias_semana": [dia.capitalize() for dia in dias],
+        }
 
 
 class ComedoresAcompanamientoListView(ListView):
