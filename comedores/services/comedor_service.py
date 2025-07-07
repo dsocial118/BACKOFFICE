@@ -1,32 +1,30 @@
-import re
-from typing import Union
-
-from django.db.models import Q, Count
-from django.core.paginator import Paginator
-
-
-from relevamientos.models import Relevamiento
-from comedores.forms.comedor_form import ImagenComedorForm
-from comedores.models import (
-    Comedor,
-    Referente,
-    ValorComida,
-    Nomina,
-)
-
-from intervenciones.models.intervenciones import Intervencion
-from configuraciones.models import Municipio, Provincia
-from configuraciones.models import Localidad
-from comedores.models import ImagenComedor
-
-
 class ComedorService:
     @staticmethod
+    def _get_objeto_por_filtro(model, **kwargs):
+        return model.objects.filter(**kwargs).first()
+
+    @staticmethod
+    def _get_id_by_nombre(model, nombre):
+        obj = model.objects.filter(nombre__iexact=nombre).first()
+        return obj.id if obj else ""
+
+    @staticmethod
+    def _normalizar_campo(valor, quitar):
+        if valor:
+            for char in quitar:
+                valor = valor.replace(char, "")
+        return valor or None
+
+    @staticmethod
     def get_comedor_by_dupla(id_dupla):
-        return Comedor.objects.filter(dupla=id_dupla).first()
+        from comedores.models import Comedor
+
+        return ComedorService._get_objeto_por_filtro(Comedor, dupla=id_dupla)
 
     @staticmethod
     def get_comedor(pk_send, as_dict=False):
+        from comedores.models import Comedor
+
         if as_dict:
             return Comedor.objects.values(
                 "id", "nombre", "provincia", "barrio", "calle", "numero"
@@ -35,6 +33,8 @@ class ComedorService:
 
     @staticmethod
     def detalle_de_intervencion(kwargs):
+        from intervenciones.models.intervenciones import Intervencion
+
         intervenciones = Intervencion.objects.filter(comedor=kwargs["pk"])
         cantidad_intervenciones = Intervencion.objects.filter(
             comedor=kwargs["pk"]
@@ -44,6 +44,8 @@ class ComedorService:
 
     @staticmethod
     def asignar_dupla_a_comedor(dupla_id, comedor_id):
+        from comedores.models import Comedor
+
         comedor = Comedor.objects.get(id=comedor_id)
         comedor.dupla_id = dupla_id
         comedor.estado = "Asignado a Dupla Técnica"
@@ -52,6 +54,9 @@ class ComedorService:
 
     @staticmethod
     def borrar_imagenes(post):
+        import re
+        from comedores.models import ImagenComedor
+
         pattern = re.compile(r"^imagen_ciudadano-borrar-(\d+)$")
         imagenes_ids = []
         for key in post:
@@ -63,7 +68,10 @@ class ComedorService:
         ImagenComedor.objects.filter(id__in=imagenes_ids).delete()
 
     @staticmethod
-    def get_comedores_filtrados(query: Union[str, None] = None):
+    def get_comedores_filtrados(query):
+        from django.db.models import Q
+        from comedores.models import Comedor
+
         queryset = (
             Comedor.objects.prefetch_related("provincia", "referente")
             .values(
@@ -97,6 +105,8 @@ class ComedorService:
 
     @staticmethod
     def get_comedor_detail_object(comedor_id: int):
+        from comedores.models import Comedor
+
         return (
             Comedor.objects.select_related(
                 "provincia",
@@ -112,36 +122,36 @@ class ComedorService:
 
     @staticmethod
     def get_ubicaciones_ids(data):
+        from configuraciones.models import Provincia, Municipio, Localidad
+
         if "provincia" in data:
-            provincia_obj = Provincia.objects.filter(
-                nombre__iexact=data["provincia"]
-            ).first()
-            data["provincia"] = provincia_obj.id if provincia_obj else ""
+            data["provincia"] = ComedorService._get_id_by_nombre(
+                Provincia, data["provincia"]
+            )
 
         if "municipio" in data:
-            municipio_obj = Municipio.objects.filter(
-                nombre__iexact=data["municipio"]
-            ).first()
-            data["municipio"] = municipio_obj.id if municipio_obj else ""
+            data["municipio"] = ComedorService._get_id_by_nombre(
+                Municipio, data["municipio"]
+            )
 
         if "localidad" in data:
-            localidad_obj = Localidad.objects.filter(
-                nombre__iexact=data["localidad"]
-            ).first()
-            data["localidad"] = localidad_obj.id if localidad_obj else ""
+            data["localidad"] = ComedorService._get_id_by_nombre(
+                Localidad, data["localidad"]
+            )
 
         return data
 
     @staticmethod
     def create_or_update_referente(data, referente_instance=None):
-        referente_data = data.get("referente", {})
+        from comedores.models import Referente
 
-        if "celular" in referente_data:
-            referente_data["celular"] = referente_data["celular"].replace("-", "")
-            if referente_data["celular"] == "":
-                referente_data["celular"] = None
-        if "documento" in referente_data:
-            referente_data["documento"] = referente_data["documento"].replace(".", "")
+        referente_data = data.get("referente", {})
+        referente_data["celular"] = ComedorService._normalizar_campo(
+            referente_data.get("celular"), "-"
+        )
+        referente_data["documento"] = ComedorService._normalizar_campo(
+            referente_data.get("documento"), "."
+        )
 
         if referente_instance is None:
             referente_instance = Referente.objects.create(**referente_data)
@@ -154,6 +164,8 @@ class ComedorService:
 
     @staticmethod
     def create_imagenes(imagen, comedor_pk):
+        from comedores.forms.comedor_form import ImagenComedorForm
+
         imagen_comedor = ImagenComedorForm(
             {"comedor": comedor_pk},
             {"imagen": imagen},
@@ -165,6 +177,9 @@ class ComedorService:
 
     @staticmethod
     def get_presupuestos(comedor_id: int):
+        from relevamientos.models import Relevamiento
+        from comedores.models import ValorComida
+
         beneficiarios = Relevamiento.objects.filter(comedor=comedor_id).first()
 
         count = {
@@ -214,6 +229,10 @@ class ComedorService:
 
     @staticmethod
     def detalle_de_nomina(comedor_pk, page=1, per_page=100):
+        from comedores.models import Nomina
+        from django.db.models import Q, Count
+        from django.core.paginator import Paginator
+
         qs_nomina = Nomina.objects.filter(comedor_id=comedor_pk).select_related(
             "ciudadano__sexo", "estado"
         )
@@ -245,3 +264,84 @@ class ComedorService:
             resumen["espera"],
             resumen["cantidad_total"],
         )
+
+    @staticmethod
+    def detalle_de_comedor_ctx(comedor):
+        from rendicioncuentasmensual.services import RendicionCuentaMensualService
+        import os
+
+        (
+            count_beneficiarios,
+            valor_cena,
+            valor_desayuno,
+            valor_almuerzo,
+            valor_merienda,
+        ) = ComedorService.get_presupuestos(comedor.id)
+
+        rendiciones_mensuales = (
+            RendicionCuentaMensualService.cantidad_rendiciones_cuentas_mensuales(
+                comedor
+            )
+        )
+        relevamientos = comedor.relevamiento_set.order_by("-estado", "-id")[:1]
+        observaciones = comedor.observacion_set.order_by("-fecha_visita")[:3]
+
+        return {
+            "relevamientos": relevamientos,
+            "observaciones": observaciones,
+            "count_relevamientos": comedor.relevamiento_set.count(),
+            "count_beneficiarios": count_beneficiarios,
+            "presupuesto_desayuno": valor_desayuno,
+            "presupuesto_almuerzo": valor_almuerzo,
+            "presupuesto_merienda": valor_merienda,
+            "presupuesto_cena": valor_cena,
+            "imagenes": comedor.imagenes.values("imagen"),
+            "comedor_categoria": comedor.clasificacioncomedor_set.order_by(
+                "-fecha"
+            ).first(),
+            "rendicion_cuentas_final_activo": rendiciones_mensuales >= 5,
+            "GESTIONAR_API_KEY": os.getenv("GESTIONAR_API_KEY"),
+            "GESTIONAR_API_CREAR_COMEDOR": os.getenv("GESTIONAR_API_CREAR_COMEDOR"),
+            "admision": comedor.admision_set.first(),
+        }
+
+    @staticmethod
+    def post_comedor_relevamiento(request, comedor):
+        from relevamientos.service import RelevamientoService
+        from django.contrib import messages
+        from django.shortcuts import redirect
+        from django.urls import reverse
+
+        is_new_relevamiento = "territorial" in request.POST
+        is_edit_relevamiento = "territorial_editar" in request.POST
+
+        if is_new_relevamiento or is_edit_relevamiento:
+            try:
+                relevamiento = None
+                if is_new_relevamiento:
+                    relevamiento = RelevamientoService.create_pendiente(
+                        request, comedor.id
+                    )
+                elif is_edit_relevamiento:
+                    relevamiento = RelevamientoService.update_territorial(request)
+                # Validación defensiva
+                if not relevamiento or not getattr(relevamiento, "comedor", None):
+                    messages.error(
+                        request,
+                        "Error al crear o editar el relevamiento: No se pudo obtener el relevamiento o su comedor.",
+                    )
+                    return redirect("comedor_detalle", pk=comedor.id)
+                return redirect(
+                    reverse(
+                        "relevamiento_detalle",
+                        kwargs={
+                            "pk": relevamiento.pk,
+                            "comedor_pk": relevamiento.comedor.pk,
+                        },
+                    )
+                )
+            except Exception as e:
+                messages.error(request, f"Error al crear el relevamiento: {e}")
+                return redirect("comedor_detalle", pk=comedor.id)
+        else:
+            return redirect("comedor_detalle", pk=comedor.id)
