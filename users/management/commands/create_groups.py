@@ -45,7 +45,17 @@ class Command(BaseCommand):
             "Usuario Editar",
             "Usuario Listar",
             "Grupos Ver",
-            "ReferenteCentro",
+            "Admin Ver Expedientes",
+            "Técnico Ver Tareas Asignadas",
+            "Provincia Ver Estado Pago",
+            "Provincia Crear Expediente",
+            "Provincia Ver Lista Aprobados",
+            "Provincia Cargar Formulario",
+            "Provincia Finalizar Expediente",
+            "Admin Asignar Técnico",
+            "Técnico Subir Cruces",
+            "Técnico Validar Resultado Cruce",
+            "Técnico Registrar Informe Pago", "ReferenteCentro",
             "CDF SSE",
         ]
         self.stdout.write(self.style.SUCCESS(f"Creando grupos de usuario..."))
